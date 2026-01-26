@@ -1,7 +1,7 @@
 // Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
+import { initializeApp, FirebaseApp } from "firebase/app";
 import { getApps, getApp } from "firebase/app"; // 導入 getApps 和 getApp 以檢查是否已初始化
-import { initializeFirestore, persistentLocalCache, connectFirestoreEmulator } from "firebase/firestore"; // 導入 persistentLocalCache
+import { initializeFirestore, persistentLocalCache, Firestore, connectFirestoreEmulator } from "firebase/firestore"; // 導入 persistentLocalCache
 // import { getAnalytics } from "firebase/analytics"; // 移除 analytics，如果不需要
 
 // Your web app's Firebase configuration
@@ -16,8 +16,8 @@ const firebaseConfig = {
   measurementId: "G-N0PV10E16C"
 };
 
-let app;
-let db;
+let app: FirebaseApp | undefined;
+let db: Firestore | undefined;
 
 // 檢查 apiKey 是否存在且有效
 if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY") {
