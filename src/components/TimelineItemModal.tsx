@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
-import { X, XCircle } from 'lucide-react'
+import { X, XCircle, Trash2 } from 'lucide-react'
 import { type TimelineItemType } from './Timeline'
+import React from 'react'
 
-type TimelineItemModalProps = {
+export type TimelineItemModalProps = {
   isOpen: boolean
   onClose: () => void
   onSubmit: (data: { time: string; title: string; category: TimelineItemType; address?: string; thaiName?: string }) => void
+  onDelete?: () => void // 新增刪除回調
   initialData?: {
     time: string
     title: string
@@ -15,12 +17,13 @@ type TimelineItemModalProps = {
   }
 }
 
-const TimelineItemModal = ({
+const TimelineItemModal: React.FC<TimelineItemModalProps> = ({
   isOpen,
   onClose,
   onSubmit,
+  onDelete,
   initialData,
-}: TimelineItemModalProps) => {
+}) => {
   const [time, setTime] = useState(initialData?.time || '10:00')
   const [title, setTitle] = useState(initialData?.title || '')
   const [address, setAddress] = useState(initialData?.address || '')
@@ -220,10 +223,24 @@ const TimelineItemModal = ({
 
             {/* 按鈕列 */}
             <div className="flex gap-3 pt-2">
+              {onDelete && initialData && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onDelete) {
+                      onDelete();
+                    }
+                  }}
+                  className="px-4 py-2.5 border-2 border-red-400 text-red-600 rounded-xl font-medium hover:bg-red-50 transition-colors active:scale-95 flex items-center gap-2"
+                >
+                  <Trash2 size={18} />
+                  刪除
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 px-4 py-2.5 border-2 border-[#E0E5D5] rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors active:scale-95"
+                className={`${onDelete && initialData ? 'flex-1' : 'flex-1'} px-4 py-2.5 border-2 border-[#E0E5D5] rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors active:scale-95`}
               >
                 取消
               </button>

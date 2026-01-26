@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Edit, Check } from 'lucide-react'
+import React from 'react'
 
 type DateItem = {
   id: string
@@ -11,7 +12,12 @@ type DateItem = {
 const weekdayFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
 const dayFormatter = new Intl.DateTimeFormat('en-US', { day: '2-digit' })
 
-const DateSelector = () => {
+export type DateSelectorProps = {
+  selectedDay: number;
+  onDayChange: (day: number) => void;
+}
+
+const DateSelector: React.FC<DateSelectorProps> = ({ selectedDay, onDayChange }) => {
   // 初始化 3 個日期
   const getInitialDates = (): DateItem[] => {
     const today = new Date()
@@ -30,6 +36,15 @@ const DateSelector = () => {
 
   const [dates, setDates] = useState<DateItem[]>(getInitialDates())
   const [selectedIndex, setSelectedIndex] = useState(0)
+
+  // 當 selectedDay 從外部改變時，同步更新 selectedIndex
+  useEffect(() => {
+    // selectedDay 是 1-based，selectedIndex 是 0-based
+    const newIndex = selectedDay - 1;
+    if (newIndex >= 0 && newIndex < dates.length) {
+      setSelectedIndex(newIndex);
+    }
+  }, [selectedDay, dates.length])
   const [isEditMode, setIsEditMode] = useState(false)
   const dateInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({})
 
@@ -138,6 +153,7 @@ const DateSelector = () => {
   // 點擊卡片時的處理
   const handleCardClick = (id: string, index: number) => {
     setSelectedIndex(index)
+    onDayChange(index + 1) // 將選中的索引轉換為 day 值（1-based）
     
     // 只有在編輯模式下才觸發日曆選擇器
     if (isEditMode) {

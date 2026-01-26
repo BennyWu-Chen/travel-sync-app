@@ -4,17 +4,19 @@ import Timeline, { type TimelineItemType } from './components/Timeline' // 導�
 import TimelineItemModal from './components/TimelineItemModal'
 import { Calendar, Ticket, Wallet, ListChecks, MapPin, Utensils, Edit, ShoppingBag, Camera, AlertCircle } from 'lucide-react'
 import { db } from './api/firebase' // 只保留這個導入
-import { collection, onSnapshot, addDoc, updateDoc, doc } from 'firebase/firestore' // 移除 enableIndexedDbPersistence
+import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, where } from 'firebase/firestore' // 添加 deleteDoc, query, where
+
 
 // 定義 TimelineItem 以包含 Firestore id
 interface TimelineItem {
-  id: string; // Firestore document ID
-  time: string;
-  title: string;
-  category: TimelineItemType;
-  address?: string;
-  thaiName?: string; // 新增泰文名稱欄位
-  iconName: string; // 用於 Firestore 儲存的圖標名稱
+  id: string; // Firestore document ID
+  time: string;
+  title: string;
+  category: TimelineItemType;
+  address?: string;
+  thaiName?: string; // 新增泰文名稱欄位
+  iconName: string; // 用於 Firestore 儲存的圖標名稱
+  day?: number; // 新增 day 欄位，用於分天過濾
 }
 
 type TabType = 'schedule' | 'booking' | 'accounting' | 'preparation'
@@ -31,14 +33,15 @@ const ErrorMessage = ({ message }: { message: string }) => (
 );
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabType>('schedule')
-  const [items, setItems] = useState<TimelineItem[]>([])
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [editingItem, setEditingItem] = useState<TimelineItem | null>(null)
-  const [isLoading, setIsLoading] = useState(true); // 新增載入狀態
-  const [error, setError] = useState<string | null>(null); // 新增錯誤狀態
+  const [activeTab, setActiveTab] = useState<TabType>('schedule')
+  const [items, setItems] = useState<TimelineItem[]>([])
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [editingItem, setEditingItem] = useState<TimelineItem | null>(null)
+  const [isLoading, setIsLoading] = useState(true); // 新增載入狀態
+  const [error, setError] = useState<string | null>(null); // 新增錯誤狀態
+  const [selectedDay, setSelectedDay] = useState<number>(1); // 新增 selectedDay 狀態，預設值為 1
 
-  // 從 Firestore 即時讀取行程資料
+  // 從 Firestore 即時讀取行程資料（根據 selectedDay 過濾）
   useEffect(() => {
     if (!db) {
       console.error("Firebase Firestore is not initialized.");
@@ -47,7 +50,10 @@ function App() {
       return;
     }
 
-    const unsubscribe = onSnapshot(collection(db, 'schedule'), (snapshot) => {
+    // 使用 query 和 where 來過濾特定天的行程
+    const q = query(collection(db, 'schedule'), where("day", "==", selectedDay));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       setIsLoading(false); // 數據載入完成
       const fetchedItems: TimelineItem[] = snapshot.docs.map((doc) => ({
         id: doc.id,
@@ -57,6 +63,7 @@ function App() {
         address: doc.data().address,
         thaiName: doc.data().thaiName, // 讀取泰文名稱
         iconName: doc.data().iconName,
+        day: doc.data().day, // 讀取 day 欄位
       }))
       // 按照時間排序
       fetchedItems.sort((a, b) => a.time.localeCompare(b.time));
@@ -71,7 +78,7 @@ function App() {
     return () => {
       unsubscribe(); // 清理訂閱
     }
-  }, [])
+  }, [selectedDay]) // 當 selectedDay 改變時重新訂閱
 
   // 根據分類獲取圖標名稱 (Firestore 儲存用)
   const getIconNameByCategory = (category: TimelineItemType): string => {
@@ -105,46 +112,75 @@ function App() {
     }
   }
 
-  // 處理新增/編輯行程並儲存到 Firestore
-  const handleSubmitItem = async (data: {
-    time: string
-    title: string
-    category: TimelineItemType
-    address?: string
-    thaiName?: string // 接收泰文名稱
-  }) => {
-    // 如果 db 未初始化，則阻止儲存操作並顯示錯誤
-    if (!db) {
-      setError("Firebase 連線失敗，無法儲存行程。");
-      return;
-    }
+  // 處理新增/編輯行程並儲存到 Firestore
+  const handleSubmitItem = async (data: {
+    time: string
+    title: string
+    category: TimelineItemType
+    address?: string
+    thaiName?: string // 接收泰文名稱
+  }) => {
+    // 如果 db 未初始化，則阻止儲存操作並顯示錯誤
+    if (!db) {
+      setError("Firebase 連線失敗，無法儲存行程。");
+      return;
+    }
 
-    const itemData = {
-      time: data.time,
-      title: data.title,
-      category: data.category,
-      address: data.address || null, // 儲存 null 而不是 undefined
-      thaiName: data.thaiName || null, // 儲存泰文名稱
-      iconName: getIconNameByCategory(data.category),
-    }
+    const itemData = {
+      time: data.time,
+      title: data.title,
+      category: data.category,
+      address: data.address || null, // 儲存 null 而不是 undefined
+      thaiName: data.thaiName || null, // 儲存泰文名稱
+      iconName: getIconNameByCategory(data.category),
+      day: editingItem ? editingItem.day : selectedDay, // 編輯時保留原 day，新增時使用 selectedDay
+    }
 
-    try {
-      if (editingItem) {
-        // 編輯模式: 更新現有文件
-        const itemDocRef = doc(db, 'schedule', editingItem.id);
-        await updateDoc(itemDocRef, itemData);
-      } else {
-        // 新增模式: 添加新文件
-        await addDoc(collection(db, 'schedule'), itemData);
-      }
-    } catch (e) {
-      console.error("Error writing document: ", e);
-      setError("儲存行程時發生錯誤，請稍後再試。");
-    } finally {
-      setEditingItem(null);
-      setIsModalOpen(false);
-    }
-  }
+    try {
+      if (editingItem) {
+        // 編輯模式: 更新現有文件
+        const itemDocRef = doc(db, 'schedule', editingItem.id);
+        await updateDoc(itemDocRef, itemData);
+      } else {
+        // 新增模式: 添加新文件，自動將 selectedDay 存入 day 欄位
+        await addDoc(collection(db, 'schedule'), itemData);
+      }
+    } catch (e) {
+      console.error("Error writing document: ", e);
+      setError("儲存行程時發生錯誤，請稍後再試。");
+    } finally {
+      setEditingItem(null);
+      setIsModalOpen(false);
+    }
+  }
+
+  // 處理刪除行程
+  const handleDeleteItem = async (itemId: string) => {
+    // 如果 db 未初始化，則阻止刪除操作並顯示錯誤
+    if (!db) {
+      setError("Firebase 連線失敗，無法刪除行程。");
+      return;
+    }
+
+    // 刪除前確認
+    const confirmed = window.confirm("確定要刪除此行程嗎？此操作無法復原。");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const itemDocRef = doc(db, 'schedule', itemId);
+      await deleteDoc(itemDocRef);
+      // 關閉編輯 Modal（如果正在編輯該項目）
+      if (editingItem && editingItem.id === itemId) {
+        setEditingItem(null);
+        setIsModalOpen(false);
+      }
+    } catch (e) {
+      console.error("Error deleting document: ", e);
+      setError("刪除行程時發生錯誤，請稍後再試。");
+    }
+  }
 
   // 點擊行程卡片
   const handleItemClick = (item: TimelineItem) => {
@@ -240,9 +276,12 @@ function App() {
                 <Edit size={18} />
               </button>
             </div>
-            <div className="mb-6 px-4 pt-2 pr-2">
-              <DateSelector />
-            </div>
+            <div className="mb-6 px-4 pt-2 pr-2">
+              <DateSelector 
+                selectedDay={selectedDay}
+                onDayChange={setSelectedDay}
+              />
+            </div>
             <div className="mb-6">
               <Timeline
                 items={items.map(item => ({
@@ -255,25 +294,26 @@ function App() {
                 onCopyAddress={handleCopyAddress} // 傳遞複製地址的 prop
               />
             </div>
-            <TimelineItemModal
-              isOpen={isModalOpen}
-              onClose={() => {
-                setIsModalOpen(false)
-                setEditingItem(null)
-              }}
-              onSubmit={handleSubmitItem}
-              initialData={
-                editingItem
-                  ? {
-                      time: editingItem.time,
-                      title: editingItem.title,
-                      category: editingItem.category,
-                      address: editingItem.address,
-                      thaiName: editingItem.thaiName, // 傳遞泰文名稱
-                    }
-                  : undefined
-              }
-            />
+            <TimelineItemModal
+              isOpen={isModalOpen}
+              onClose={() => {
+                setIsModalOpen(false)
+                setEditingItem(null)
+              }}
+              onSubmit={handleSubmitItem}
+              onDelete={editingItem ? () => handleDeleteItem(editingItem.id) : undefined}
+              initialData={
+                editingItem
+                  ? {
+                      time: editingItem.time,
+                      title: editingItem.title,
+                      category: editingItem.category,
+                      address: editingItem.address,
+                      thaiName: editingItem.thaiName, // 傳遞泰文名稱
+                    }
+                  : undefined
+              }
+            />
           </>
         )
       case 'booking':
