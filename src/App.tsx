@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react'
 import DateSelector from './components/DateSelector'
 import Timeline, { type TimelineItemType } from './components/Timeline'
 import TimelineItemModal from './components/TimelineItemModal'
-import { Calendar, Ticket, Wallet, ListChecks, MapPin, Utensils, Edit, ShoppingBag, Camera, AlertCircle, Users, Plus, X, Languages, Copy } from 'lucide-react'
+import FlightCard from './components/FlightCard'
+import HotelCard from './components/HotelCard'
+import BookingModal from './components/BookingModal'
+import { Calendar, Ticket, Wallet, ListChecks, MapPin, Utensils, Edit, ShoppingBag, Camera, AlertCircle, Users, Plus, X, Languages, Copy, Plane, Hotel, Car, FileText, Navigation, ExternalLink } from 'lucide-react'
 import { db } from './api/firebase'
 import { 
   collection, 
@@ -34,6 +37,42 @@ interface TimelineItem {
 interface Member {
   id: string;
   name: string;
+}
+
+// 預訂資料型別
+export type BookingType = 'flight' | 'hotel' | 'transport' | 'voucher'
+
+export interface Booking {
+  id: string;
+  type: BookingType;
+  title?: string; // 通用標題
+  imageUrl?: string; // 通用圖片 URL
+  price?: number; // 通用價格
+  // 航空機票欄位 (type === 'flight')
+  airline?: string;
+  flightNo?: string;
+  depTime?: string;
+  arrTime?: string;
+  depCity?: string;
+  arrCity?: string;
+  bookingRef?: string;
+  // 住宿飯店欄位 (type === 'hotel')
+  hotelName?: string;
+  hotelAddress?: string;
+  checkIn?: string;
+  checkOut?: string;
+  // 交通/租車欄位 (type === 'transport')
+  transportType?: string;
+  pickupLocation?: string;
+  dropoffLocation?: string;
+  pickupTime?: string;
+  dropoffTime?: string;
+  // 憑證欄位 (type === 'voucher')
+  voucherName?: string;
+  voucherUrl?: string;
+  voucherType?: 'pdf' | 'image';
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 type TabType = 'schedule' | 'booking' | 'translation' | 'accounting' | 'members'
@@ -74,6 +113,12 @@ function App() {
   const [sourceLang, setSourceLang] = useState<'zh-TW' | 'th' | 'en' | 'ja' | 'ko'>('zh-TW');
   const [targetLangForTool, setTargetLangForTool] = useState<'th' | 'en' | 'ja' | 'ko' | 'zh-TW'>('th');
   const [isTranslating, setIsTranslating] = useState(false);
+
+  // 預訂資料狀態
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [isLoadingBookings, setIsLoadingBookings] = useState(true);
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
 
   // 2. 監聽資料庫中的「旅行起點日期」和「旅程標題」設定
   useEffect(() => {
@@ -134,6 +179,93 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // 監聽 Firebase 的 bookings 集合
+  useEffect(() => {
+    if (!db) {
+      setIsLoadingBookings(false);
+      return;
+    }
+    
+    setIsLoadingBookings(true);
+    const unsubscribe = onSnapshot(collection(db, 'bookings'), (snapshot) => {
+      const fetchedBookings: Booking[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      } as Booking));
+      setBookings(fetchedBookings);
+      setIsLoadingBookings(false);
+    }, (err) => {
+      console.error("Firestore bookings onSnapshot Error: ", err);
+      setIsLoadingBookings(false);
+    });
+    
+    return () => unsubscribe();
+  }, []);
+
+  // 處理新增/編輯預訂
+  const handleSubmitBooking = async (data: Partial<Booking>) => {
+    if (!db) {
+      setError("Firebase 連線失敗，無法儲存預訂。");
+      return;
+    }
+
+    // 確保所有欄位都有預設值，避免 Firestore undefined 錯誤
+    const bookingData: any = {
+      type: data.type || "",
+      title: data.title || "",
+      imageUrl: data.imageUrl || "",
+      price: data.price || 0,
+      updatedAt: serverTimestamp()
+    };
+
+    // 根據類型填充對應欄位
+    if (data.type === 'flight') {
+      bookingData.airline = data.airline || "";
+      bookingData.flightNo = data.flightNo || "";
+      bookingData.depTime = data.depTime || "";
+      bookingData.arrTime = data.arrTime || "";
+      bookingData.depCity = data.depCity || "";
+      bookingData.arrCity = data.arrCity || "";
+      bookingData.bookingRef = data.bookingRef || "";
+    } else if (data.type === 'hotel') {
+      bookingData.hotelName = data.hotelName || "";
+      bookingData.hotelAddress = data.hotelAddress || "";
+      bookingData.checkIn = data.checkIn || "";
+      bookingData.checkOut = data.checkOut || "";
+      bookingData.imageUrl = data.imageUrl || "";
+      bookingData.price = data.price || 0; // 住宿必須有 price
+    } else if (data.type === 'transport') {
+      bookingData.transportType = data.transportType || data.title || "";
+      bookingData.pickupLocation = data.pickupLocation || "";
+      bookingData.dropoffLocation = data.dropoffLocation || "";
+      bookingData.pickupTime = data.pickupTime || "";
+      bookingData.dropoffTime = data.dropoffTime || "";
+    } else if (data.type === 'voucher') {
+      bookingData.voucherName = data.voucherName || data.title || "";
+      bookingData.voucherUrl = data.voucherUrl || "";
+      bookingData.voucherType = data.voucherType || "pdf";
+    }
+
+    try {
+      if (editingBooking) {
+        // 編輯模式
+        await updateDoc(doc(db, 'bookings', editingBooking.id), bookingData);
+      } else {
+        // 新增模式
+        await addDoc(collection(db, 'bookings'), {
+          ...bookingData,
+          createdAt: serverTimestamp()
+        });
+      }
+      setIsBookingModalOpen(false);
+      setEditingBooking(null);
+      setError(null);
+    } catch (e) {
+      console.error("Error writing booking: ", e);
+      setError("儲存預訂時發生錯誤，請稍後再試。");
+    }
+  };
 
   // 4. 更新旅行起點日期並回傳資料庫
   const handleUpdateStartDate = async (newDate: string) => {
@@ -479,10 +611,223 @@ const getIconComponentByName = (name: string) => {
       case 'booking':
         return (
           <div className="px-4 py-6">
-            <h1 className="text-3xl font-bold text-[#86A38E] mb-6">預訂</h1>
-            <div className="bg-white rounded-[1.5rem] p-8 shadow-[4px_4px_0px_#E0E5D5] text-center">
-              <p className="text-gray-800 text-base">預訂頁面建設中...</p>
+            <div className="flex items-center justify-between mb-6">
+              <h1 className="text-3xl font-bold text-[#86A38E]">預訂</h1>
+              <button
+                onClick={() => {
+                  setEditingBooking(null);
+                  setIsBookingModalOpen(true);
+                }}
+                className="p-2 bg-white border-2 border-[#86A38E] text-[#86A38E] rounded-xl shadow-sm active:scale-95 transition-all"
+                aria-label="新增預訂"
+              >
+                <Plus size={18} />
+              </button>
             </div>
+            
+            {isLoadingBookings ? (
+              <div className="text-center py-10 text-[#86A38E]">載入中...</div>
+            ) : bookings.length === 0 ? (
+              <div className="bg-white rounded-xl p-8 shadow-[4px_4px_0px_#E0E5D5] text-center">
+                <Ticket size={48} className="text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-600">尚無預訂資料</p>
+                <button
+                  onClick={() => {
+                    setEditingBooking(null);
+                    setIsBookingModalOpen(true);
+                  }}
+                  className="mt-4 px-4 py-2 bg-[#86A38E] text-white rounded-lg hover:bg-[#7a9382] transition-colors active:scale-95"
+                >
+                  新增預訂
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* 航空機票 */}
+                {bookings.filter(b => b.type === 'flight').map((booking) => (
+                  <FlightCard
+                    key={booking.id}
+                    airline={booking.airline}
+                    flightNo={booking.flightNo}
+                    depTime={booking.depTime}
+                    arrTime={booking.arrTime}
+                    depCity={booking.depCity}
+                    arrCity={booking.arrCity}
+                    bookingRef={booking.bookingRef}
+                    showDelete={true}
+                    onClick={() => {
+                      setEditingBooking(booking);
+                      setIsBookingModalOpen(true);
+                    }}
+                    onDelete={async () => {
+                      if (window.confirm('確定要刪除此預訂嗎？')) {
+                        if (!db) return;
+                        try {
+                          await deleteDoc(doc(db, 'bookings', booking.id));
+                        } catch (e) {
+                          console.error("Error deleting booking: ", e);
+                          setError("刪除預訂時發生錯誤，請稍後再試。");
+                        }
+                      }
+                    }}
+                  />
+                ))}
+
+                {/* 住宿飯店 */}
+                {bookings.filter(b => b.type === 'hotel').map((booking) => (
+                  <HotelCard
+                    key={booking.id}
+                    hotelName={booking.hotelName}
+                    hotelAddress={booking.hotelAddress}
+                    imageUrl={booking.imageUrl}
+                    checkIn={booking.checkIn}
+                    checkOut={booking.checkOut}
+                    price={booking.price}
+                    memberCount={members.length || 1}
+                    showDelete={true}
+                    onClick={() => {
+                      setEditingBooking(booking);
+                      setIsBookingModalOpen(true);
+                    }}
+                    onDelete={async () => {
+                      if (window.confirm('確定要刪除此預訂嗎？')) {
+                        if (!db) return;
+                        try {
+                          await deleteDoc(doc(db, 'bookings', booking.id));
+                        } catch (e) {
+                          console.error("Error deleting booking: ", e);
+                          setError("刪除預訂時發生錯誤，請稍後再試。");
+                        }
+                      }
+                    }}
+                  />
+                ))}
+
+                {/* 交通/租車 */}
+                {bookings.filter(b => b.type === 'transport').map((booking) => (
+                  <div 
+                    key={booking.id} 
+                    className="bg-white rounded-xl p-4 shadow-[4px_4px_0px_#E0E5D5] cursor-pointer hover:shadow-[6px_6px_0px_#E0E5D5] transition-all active:scale-[0.98] relative"
+                    onClick={() => {
+                      setEditingBooking(booking);
+                      setIsBookingModalOpen(true);
+                    }}
+                  >
+                    {/* 刪除按鈕 */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm('確定要刪除此預訂嗎？')) {
+                          if (!db) return;
+                          deleteDoc(doc(db, 'bookings', booking.id)).catch((e) => {
+                            console.error("Error deleting booking: ", e);
+                            setError("刪除預訂時發生錯誤，請稍後再試。");
+                          });
+                        }
+                      }}
+                      className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors active:scale-95 z-10 shadow-sm"
+                      aria-label="刪除"
+                    >
+                      <X size={14} />
+                    </button>
+                    <div className="flex items-start gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-lg bg-[#86A38E] flex items-center justify-center flex-shrink-0">
+                        <Car size={20} className="text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-semibold text-gray-800 mb-2">{booking.transportType || booking.title || '交通方式'}</div>
+                        <div className="space-y-1.5 text-sm text-gray-600">
+                          {booking.pickupTime && (
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                              <span className="font-medium">取車：</span>
+                              <span>{booking.pickupTime}</span>
+                              {booking.pickupLocation && (
+                                <span className="text-gray-400">@ {booking.pickupLocation}</span>
+                              )}
+                            </div>
+                          )}
+                          {booking.dropoffTime && (
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                              <span className="font-medium">還車：</span>
+                              <span>{booking.dropoffTime}</span>
+                              {booking.dropoffLocation && (
+                                <span className="text-gray-400">@ {booking.dropoffLocation}</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* 憑證清單 */}
+                {bookings.filter(b => b.type === 'voucher').length > 0 && (
+                  <div className="bg-white rounded-xl p-4 shadow-[4px_4px_0px_#E0E5D5]">
+                    <div className="flex items-center gap-2 mb-3">
+                      <FileText size={20} className="text-[#86A38E]" />
+                      <h3 className="text-lg font-bold text-gray-800">憑證清單</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {bookings.filter(b => b.type === 'voucher').map((booking) => (
+                        <div
+                          key={booking.id}
+                          className="relative flex items-center justify-between p-3 bg-[#F7F4EB] rounded-lg hover:bg-[#E0E5D5] transition-colors cursor-pointer active:scale-95"
+                          onClick={() => {
+                            if (booking.voucherUrl) {
+                              window.open(booking.voucherUrl, '_blank');
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            {booking.voucherType === 'pdf' ? (
+                              <FileText size={18} className="text-red-500" />
+                            ) : (
+                              <Camera size={18} className="text-blue-500" />
+                            )}
+                            <span className="text-gray-800 font-medium">{booking.voucherName || booking.title || '未命名憑證'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {booking.voucherUrl && (
+                              <ExternalLink size={16} className="text-gray-400" />
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm('確定要刪除此憑證嗎？')) {
+                                  if (!db) return;
+                                  deleteDoc(doc(db, 'bookings', booking.id)).catch((e) => {
+                                    console.error("Error deleting booking: ", e);
+                                    setError("刪除預訂時發生錯誤，請稍後再試。");
+                                  });
+                                }
+                              }}
+                              className="w-6 h-6 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors active:scale-95 z-10 shadow-sm"
+                              aria-label="刪除"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 預訂 Modal */}
+            <BookingModal
+              isOpen={isBookingModalOpen}
+              onClose={() => {
+                setIsBookingModalOpen(false);
+                setEditingBooking(null);
+              }}
+              onSubmit={handleSubmitBooking}
+              initialData={editingBooking}
+            />
           </div>
         );
       case 'translation':
