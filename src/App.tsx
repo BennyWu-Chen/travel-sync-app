@@ -64,20 +64,22 @@ function App() {
     setIsLoading(true);
     localStorage.setItem('last_selected_day', selectedDay.toString());
 
+    // 使用 where 查詢並在客戶端排序（避免索引問題）
     const q = query(
       collection(db, 'schedule'),
-      where('day', '==', selectedDay), // 分天顯示關鍵
-      orderBy('time', 'asc')
+      where('day', '==', selectedDay)
     );
 
     const unsubscribe: Unsubscribe = onSnapshot(q, (snapshot) => {
       setIsLoading(false);
       const fetchedItems = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as TimelineItem[];
+      // 在客戶端按時間排序
+      fetchedItems.sort((a, b) => a.time.localeCompare(b.time));
       setItems(fetchedItems);
       setError(null);
-    }, (err) => {
-      console.error(err);
-      setError("資料載入失敗，請檢查網路或索引設定。");
+    }, (err: any) => {
+      console.error("Firestore onSnapshot Error: ", err);
+      setError("資料載入失敗，請檢查網路連線或稍後再試。");
       setIsLoading(false);
     });
 
@@ -111,23 +113,47 @@ function App() {
     }
   };
 
-  const handleSubmitItem = async (data: any) => {
-    if (!db) return;
+  const handleSubmitItem = async (data: {
+    time: string;
+    title: string;
+    category: TimelineItemType;
+    address?: string;
+    thaiName?: string;
+  }) => {
+    if (!db) {
+      setError("Firebase 連線失敗，無法儲存行程。");
+      return;
+    }
+    
     const itemData = {
-      ...data,
-      day: selectedDay,
+      time: data.time,
+      title: data.title,
+      category: data.category,
+      address: data.address || null,
+      thaiName: data.thaiName || null,
+      day: editingItem ? editingItem.day : selectedDay, // 編輯時保留原 day，新增時使用 selectedDay
       iconName: data.category === 'food' ? 'Utensils' : data.category === 'attraction' ? 'MapPin' : data.category === 'shopping' ? 'ShoppingBag' : 'Camera',
       updatedAt: serverTimestamp()
     };
+    
     try {
       if (editingItem) {
+        // 編輯模式: 更新現有文件
         await updateDoc(doc(db, 'schedule', editingItem.id), itemData);
       } else {
-        await addDoc(collection(db, 'schedule'), { ...itemData, createdAt: serverTimestamp() });
+        // 新增模式: 添加新文件
+        await addDoc(collection(db, 'schedule'), { 
+          ...itemData, 
+          createdAt: serverTimestamp() 
+        });
       }
       setIsModalOpen(false);
       setEditingItem(null);
-    } catch (e) { console.error(e); }
+      setError(null);
+    } catch (e) {
+      console.error("Error writing document: ", e);
+      setError("儲存行程時發生錯誤，請稍後再試。");
+    }
   }
 
 // 確保檔案最上方有 import React from 'react'
