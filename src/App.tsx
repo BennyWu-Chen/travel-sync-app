@@ -143,6 +143,10 @@ function App() {
   const [journeyTitle, setJourneyTitle] = useState('旅程日誌');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isStartDateLoaded, setIsStartDateLoaded] = useState(false); // 追蹤是否已從 Firebase 載入
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof window !== 'undefined' ? navigator.onLine : true
+  );
+  const [showReconnectBar, setShowReconnectBar] = useState(false);
   
   // 階段二：工程師模式狀態
   const [isAdmin, setIsAdmin] = useState(false);
@@ -253,6 +257,31 @@ function App() {
     
     return () => unsubConfig();
   }, [db]);
+
+  // 監聽瀏覽器 online / offline 事件，控制 OfflineBar 顯示
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      setShowReconnectBar(true);
+      // 3 秒後自動收起綠色提示
+      setTimeout(() => setShowReconnectBar(false), 3000);
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      setShowReconnectBar(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // 3. 監聽資料庫中的「行程內容」，根據選中天數過濾
   useEffect(() => {
@@ -941,6 +970,24 @@ const getIconComponentByName = (name: string) => {
       case 'schedule':
         return (
       <>
+        {/* Offline / Reconnect Bar */}
+        {(!isOnline || showReconnectBar) && (
+          <div
+            className={`mx-4 mb-2 px-3 py-2 rounded-xl text-[11px] flex items-center gap-2 transition-all duration-300 ${
+              !isOnline
+                ? 'bg-orange-50 border border-orange-300 text-orange-800'
+                : 'bg-green-50 border border-green-300 text-green-800'
+            }`}
+          >
+            <span>{!isOnline ? '📶' : '✅'}</span>
+            <span>
+              {!isOnline
+                ? '目前為離線模式：資料將於連網後自動同步'
+                : '網路已恢復，資料同步中...'}
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-6 px-4">
           {isEditingTitle ? (
             <input
