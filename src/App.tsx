@@ -629,6 +629,35 @@ function App() {
     }
   };
 
+  // 工程師模式：一鍵刪除所有記帳（expenses）
+  const handleDeleteAllExpenses = async () => {
+    if (!isAdmin) {
+      alert("請先進入工程師模式");
+      return;
+    }
+    if (!db) return;
+    if (window.confirm("⚠️ 警告：確定要刪除所有記帳紀錄嗎？此操作無法復原！")) {
+      try {
+        const snapshot = await getDocs(collection(db, 'expenses'));
+        const docsToDelete = snapshot.docs;
+
+        if (docsToDelete.length === 0) {
+          alert("沒有記帳紀錄可刪除");
+          return;
+        }
+
+        const deletePromises = docsToDelete.map((docSnap) =>
+          deleteDoc(doc(db, 'expenses', docSnap.id))
+        );
+        await Promise.all(deletePromises);
+        alert(`已刪除所有記帳（共 ${docsToDelete.length} 筆）`);
+      } catch (e) {
+        console.error("批量刪除記帳失敗:", e);
+        alert("刪除記帳失敗");
+      }
+    }
+  };
+
   // 工程師模式：一鍵刪除所有行程（所有天的行程）
   const handleDeleteAllItems = async () => {
     if (!isAdmin) {
@@ -655,6 +684,35 @@ function App() {
       } catch (e) {
         console.error("批量刪除失敗:", e);
         alert("刪除失敗");
+      }
+    }
+  };
+
+  // 工程師模式：一鍵刪除所有預訂（bookings）
+  const handleDeleteAllBookings = async () => {
+    if (!isAdmin) {
+      alert("請先進入工程師模式");
+      return;
+    }
+    if (!db) return;
+    if (window.confirm("⚠️ 警告：確定要刪除所有預訂嗎？此操作無法復原！")) {
+      try {
+        const snapshot = await getDocs(collection(db, 'bookings'));
+        const docsToDelete = snapshot.docs;
+
+        if (docsToDelete.length === 0) {
+          alert("沒有預訂可刪除");
+          return;
+        }
+
+        const deletePromises = docsToDelete.map((docSnap) =>
+          deleteDoc(doc(db, 'bookings', docSnap.id))
+        );
+        await Promise.all(deletePromises);
+        alert(`已刪除所有預訂（共 ${docsToDelete.length} 筆）`);
+      } catch (e) {
+        console.error("批量刪除預訂失敗:", e);
+        alert("刪除預訂失敗");
       }
     }
   };
@@ -1895,6 +1953,18 @@ const getIconComponentByName = (name: string) => {
                     className="w-full py-2 px-4 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors active:scale-95"
                   >
                     ⚠️ 一鍵刪除所有行程
+                  </button>
+                  <button
+                    onClick={handleDeleteAllExpenses}
+                    className="w-full py-2 px-4 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors active:scale-95"
+                  >
+                    ⚠️ 一鍵刪除所有記帳
+                  </button>
+                  <button
+                    onClick={handleDeleteAllBookings}
+                    className="w-full py-2 px-4 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors active:scale-95"
+                  >
+                    ⚠️ 一鍵刪除所有預訂
                   </button>
                 </div>
               )}
