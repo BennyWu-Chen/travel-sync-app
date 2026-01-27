@@ -46,13 +46,21 @@ function App() {
     return saved ? parseInt(saved, 10) : 1;
   });
   const [startDate, setStartDate] = useState('2026-01-30');
+  const [journeyTitle, setJourneyTitle] = useState('旅程日誌');
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
 
-  // 2. 監聽資料庫中的「旅行起點日期」設定
+  // 2. 監聽資料庫中的「旅行起點日期」和「旅程標題」設定
   useEffect(() => {
     if (!db) return;
     const unsubConfig = onSnapshot(doc(db, 'config', 'trip_settings'), (docSnap) => {
-      if (docSnap.exists() && docSnap.data().startDate) {
-        setStartDate(docSnap.data().startDate);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.startDate) {
+          setStartDate(data.startDate);
+        }
+        if (data.journeyTitle) {
+          setJourneyTitle(data.journeyTitle);
+        }
       }
     });
     return () => unsubConfig();
@@ -96,6 +104,21 @@ function App() {
       }, { merge: true });
     } catch (e) {
       console.error("更新日期失敗:", e);
+    }
+  };
+
+  // 更新旅程標題並回傳資料庫
+  const handleUpdateTitle = async (newTitle: string) => {
+    if (!db) return;
+    try {
+      await setDoc(doc(db, 'config', 'trip_settings'), {
+        journeyTitle: newTitle,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      setJourneyTitle(newTitle);
+      setIsEditingTitle(false);
+    } catch (e) {
+      console.error("更新標題失敗:", e);
     }
   };
 
@@ -174,8 +197,50 @@ const getIconComponentByName = (name: string) => {
     return (
       <>
         <div className="flex items-center justify-between mb-6 px-4">
-          <h1 className="text-3xl font-bold text-[#86A38E]">旅程日誌</h1>
-          <button onClick={() => { setEditingItem(null); setIsModalOpen(true); }} className="p-2 bg-white border-2 border-[#86A38E] text-[#86A38E] rounded-xl shadow-sm">
+          {isEditingTitle ? (
+            <input
+              type="text"
+              value={journeyTitle}
+              onChange={(e) => setJourneyTitle(e.target.value)}
+              onBlur={() => {
+                if (journeyTitle.trim()) {
+                  handleUpdateTitle(journeyTitle.trim());
+                } else {
+                  setJourneyTitle('旅程日誌');
+                  setIsEditingTitle(false);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur();
+                } else if (e.key === 'Escape') {
+                  setJourneyTitle('旅程日誌');
+                  setIsEditingTitle(false);
+                }
+              }}
+              autoFocus
+              className="text-3xl font-bold text-[#86A38E] bg-transparent border-b-2 border-[#86A38E] focus:outline-none focus:border-[#7a9382] flex-1 mr-2"
+            />
+          ) : (
+            <h1 className="text-3xl font-bold text-[#86A38E]">{journeyTitle}</h1>
+          )}
+          <button 
+            onClick={() => {
+              if (isEditingTitle) {
+                // 如果正在編輯，保存並退出編輯模式
+                if (journeyTitle.trim()) {
+                  handleUpdateTitle(journeyTitle.trim());
+                } else {
+                  setJourneyTitle('旅程日誌');
+                  setIsEditingTitle(false);
+                }
+              } else {
+                // 如果沒有在編輯，進入編輯模式
+                setIsEditingTitle(true);
+              }
+            }} 
+            className="p-2 bg-white border-2 border-[#86A38E] text-[#86A38E] rounded-xl shadow-sm active:scale-95 transition-all"
+          >
             <Edit size={18} />
           </button>
         </div>
