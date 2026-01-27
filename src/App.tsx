@@ -87,12 +87,33 @@ function App() {
 
   // 1. 狀態管理：目前選擇的天數與旅行起點日期
   const [selectedDay, setSelectedDay] = useState<number>(() => {
-    const saved = localStorage.getItem('last_selected_day');
-    return saved ? parseInt(saved, 10) : 1;
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('last_selected_day');
+      return saved ? parseInt(saved, 10) : 1;
+    }
+    return 1;
   });
-  const [startDate, setStartDate] = useState('2026-01-30');
+
+  // 強化 selectedDay 的持久化：當 selectedDay 改變時立即寫入 localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('last_selected_day', selectedDay.toString());
+    }
+  }, [selectedDay]);
+  // 從 localStorage 讀取 startDate 作為初始值（備援機制）
+  const [startDate, setStartDate] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('trip_start_date');
+      // 驗證日期格式是否正確 (YYYY-MM-DD)
+      if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) {
+        return saved;
+      }
+    }
+    return '2026-01-30'; // 預設值
+  });
   const [journeyTitle, setJourneyTitle] = useState('旅程日誌');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isStartDateLoaded, setIsStartDateLoaded] = useState(false); // 追蹤是否已從 Firebase 載入
   
   // 階段二：工程師模式狀態
   const [isAdmin, setIsAdmin] = useState(false);
@@ -120,33 +141,72 @@ function App() {
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
 
-  // 2. 監聽資料庫中的「旅行起點日期」和「旅程標題」設定
+  // 2. 監聽資料庫中的「旅行起點日期」和「旅程標題」設定（第一優先執行）
   useEffect(() => {
-    if (!db) return;
+    if (!db) {
+      setIsStartDateLoaded(true); // 即使沒有 db，也標記為已載入，使用 localStorage 備援
+      return;
+    }
+    
     const unsubConfig = onSnapshot(doc(db, 'config', 'trip_settings'), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.startDate) {
-          setStartDate(data.startDate);
+          const newStartDate = data.startDate;
+          // 驗證日期格式
+          if (/^\d{4}-\d{2}-\d{2}$/.test(newStartDate)) {
+            setStartDate(newStartDate);
+            // 同時存入 localStorage 作為備援
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('trip_start_date', newStartDate);
+            }
+          } else {
+            console.error('Invalid date format from Firebase:', newStartDate);
+          }
         }
         if (data.journeyTitle) {
           setJourneyTitle(data.journeyTitle);
         }
+      } else {
+        // 如果資料庫中沒有資料，使用 localStorage 備援
+        if (typeof window !== 'undefined') {
+          const saved = localStorage.getItem('trip_start_date');
+          if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) {
+            setStartDate(saved);
+          }
+        }
       }
+      setIsStartDateLoaded(true); // 標記為已載入
+    }, (err) => {
+      console.error("Firestore config onSnapshot Error: ", err);
+      // 錯誤時使用 localStorage 備援
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('trip_start_date');
+        if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) {
+          setStartDate(saved);
+        }
+      }
+      setIsStartDateLoaded(true);
     });
+    
     return () => unsubConfig();
-  }, []);
+  }, [db]);
 
   // 3. 監聽資料庫中的「行程內容」，根據選中天數過濾
   useEffect(() => {
-    if (!db) return;
+    if (!db) {
+      setIsLoading(false);
+      return;
+    }
+
+    // 確保 selectedDay 有有效值
+    const currentDay = selectedDay || 1;
     setIsLoading(true);
-    localStorage.setItem('last_selected_day', selectedDay.toString());
 
     // 使用 where 查詢並在客戶端排序（避免索引問題）
     const q = query(
       collection(db, 'schedule'),
-      where('day', '==', selectedDay)
+      where('day', '==', currentDay)
     );
 
     const unsubscribe: Unsubscribe = onSnapshot(q, (snapshot) => {
@@ -162,8 +222,11 @@ function App() {
       setIsLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [selectedDay]);
+    // 確保正確清理舊的監聽器
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedDay, db]);
 
   // 階段一：監聽 Firebase 的 members 集合
   useEffect(() => {
@@ -269,6 +332,19 @@ function App() {
 
   // 4. 更新旅行起點日期並回傳資料庫
   const handleUpdateStartDate = async (newDate: string) => {
+    // 驗證日期格式
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+      console.error('Invalid date format:', newDate);
+      return;
+    }
+    
+    // 先更新本地狀態和 localStorage（立即生效）
+    setStartDate(newDate);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trip_start_date', newDate);
+    }
+    
+    // 然後同步到 Firebase
     if (!db) return;
     try {
       await setDoc(doc(db, 'config', 'trip_settings'), {
@@ -482,13 +558,16 @@ function App() {
       return;
     }
     
+    // 確保 selectedDay 有有效值，避免 undefined
+    const currentDay = editingItem ? (editingItem.day || 1) : (selectedDay || 1);
+    
     const itemData = {
       time: data.time,
       title: data.title,
       category: data.category,
       address: data.address || null,
       thaiName: data.thaiName || null,
-      day: editingItem ? editingItem.day : selectedDay, // 編輯時保留原 day，新增時使用 selectedDay
+      day: currentDay, // 編輯時保留原 day，新增時使用 selectedDay（確保有預設值 1）
       iconName: data.category === 'food' ? 'Utensils' : data.category === 'attraction' ? 'MapPin' : data.category === 'shopping' ? 'ShoppingBag' : 'Camera',
       updatedAt: serverTimestamp()
     };
@@ -580,12 +659,33 @@ const getIconComponentByName = (name: string) => {
           </button>
         </div>
         <div className="mb-6 px-4">
-          <DateSelector 
-            selectedDay={selectedDay} 
-            onSelectDay={setSelectedDay}
-            startDate={startDate}
-            onUpdateStartDate={handleUpdateStartDate}
-          />
+          {!isStartDateLoaded ? (
+            <div className="text-center py-4 text-[#86A38E] text-sm">載入日期中...</div>
+          ) : (
+            <DateSelector 
+              selectedDay={selectedDay} 
+              onSelectDay={setSelectedDay}
+              startDate={startDate}
+              onUpdateStartDate={handleUpdateStartDate}
+            />
+          )}
+        </div>
+
+        {/* 語言選擇器 */}
+        <div className="mb-4 px-4">
+          <div className="bg-white rounded-xl p-3 shadow-[4px_4px_0px_#E0E5D5]">
+            <label className="block text-xs text-gray-500 mb-2">翻譯語言</label>
+            <select
+              value={targetLang}
+              onChange={(e) => setTargetLang(e.target.value as 'th' | 'en' | 'ja' | 'ko')}
+              className="w-full px-3 py-2 border-2 border-[#E0E5D5] rounded-lg focus:outline-none focus:border-[#86A38E] transition-colors text-sm"
+            >
+              <option value="th">泰文</option>
+              <option value="en">英文</option>
+              <option value="ja">日文</option>
+              <option value="ko">韓文</option>
+            </select>
+          </div>
         </div>
         
         {isLoading ? <div className="text-center py-10 text-[#86A38E]">載入中...</div> : (

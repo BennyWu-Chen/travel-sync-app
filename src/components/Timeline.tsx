@@ -1,4 +1,4 @@
-import { MapPin, Utensils, Camera, ShoppingBag, Navigation, Copy } from 'lucide-react'
+import { MapPin, Utensils, Camera, ShoppingBag, Navigation, Copy, X } from 'lucide-react'
 import React, { useState, useEffect, useRef } from 'react'
 
 export type TimelineItemType = 'food' | 'attraction' | 'shopping' | 'other'
@@ -36,11 +36,15 @@ export type TimelineProps = {
   onAddClick?: () => void;
   onNavigate?: (item: Omit<TimelineItem, 'icon' | 'thaiName'>) => void; // 導航時不需要 icon 和 thaiName
   onCopyAddress?: (text: string) => void; // 新增複製地址的 prop
+  onDelete?: (item: Omit<TimelineItem, 'icon' | 'thaiName'>) => void; // 刪除行程
   targetLang?: 'th' | 'en' | 'ja' | 'ko'; // 目標語言
   translateText?: (text: string, lang: 'th' | 'en' | 'ja' | 'ko') => Promise<string>; // 翻譯函數
 }
 
-const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress, targetLang, translateText }: TimelineProps) => {
+// 重新導出 TimelineItem 類型，確保與 App.tsx 兼容
+export type { TimelineItem }
+
+const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress, onDelete, targetLang, translateText }: TimelineProps) => {
   // 翻譯狀態管理
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [loadingTranslations, setLoadingTranslations] = useState<Set<string>>(new Set());
@@ -115,7 +119,7 @@ const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress, t
               {/* 卡片內容 */}
               <div className="flex-1 min-w-0">
                 <div
-                  className={`bg-white rounded-xl p-4 shadow-[4px_4px_0px_#E0E5D5] ${
+                  className={`relative bg-white rounded-xl p-4 shadow-[4px_4px_0px_#E0E5D5] ${
                     onItemClick ? 'cursor-pointer hover:shadow-[6px_6px_0px_#E0E5D5] transition-shadow active:scale-95' : ''
                   }`}
                   onClick={() => onItemClick?.(item)}
