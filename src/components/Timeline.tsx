@@ -1,5 +1,5 @@
 import { MapPin, Utensils, Camera, ShoppingBag, Navigation, Copy } from 'lucide-react'
-import React from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 export type TimelineItemType = 'food' | 'attraction' | 'shopping' | 'other'
 
@@ -30,15 +30,65 @@ const categoryLabels: Record<TimelineItemType, string> = {
 }
 
 // 定義傳入 Timeline 的 props
-type TimelineProps = {
+export type TimelineProps = {
   items: (TimelineItem & { icon: React.ReactNode })[]; // 從 App.tsx 傳入的 item 會帶有 icon (ReactNode)
   onItemClick?: (item: Omit<TimelineItem, 'icon' | 'thaiName'>) => void; // 點擊時不需要 icon 和 thaiName
   onAddClick?: () => void;
   onNavigate?: (item: Omit<TimelineItem, 'icon' | 'thaiName'>) => void; // 導航時不需要 icon 和 thaiName
   onCopyAddress?: (text: string) => void; // 新增複製地址的 prop
+  targetLang?: 'th' | 'en' | 'ja' | 'ko'; // 目標語言
+  translateText?: (text: string, lang: 'th' | 'en' | 'ja' | 'ko') => Promise<string>; // 翻譯函數
 }
 
-const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress }: TimelineProps) => {
+const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress, targetLang, translateText }: TimelineProps) => {
+  // 翻譯狀態管理
+  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [loadingTranslations, setLoadingTranslations] = useState<Set<string>>(new Set());
+  const translationCacheRef = useRef<Record<string, string>>({});
+
+  // 當 targetLang 或 items 改變時，重新翻譯
+  useEffect(() => {
+    if (!targetLang || !translateText) return;
+
+    const translateItems = async () => {
+      const newTranslations: Record<string, string> = {};
+      const loadingSet = new Set<string>();
+
+      for (const item of items) {
+        const cacheKey = `${item.title}_${targetLang}`;
+        
+        // 檢查 cache（使用 ref 避免依賴問題）
+        if (translationCacheRef.current[cacheKey]) {
+          newTranslations[cacheKey] = translationCacheRef.current[cacheKey];
+          continue;
+        }
+
+        // 標記為載入中
+        loadingSet.add(item.id);
+        setLoadingTranslations(new Set(loadingSet));
+
+        try {
+          const translated = await translateText(item.title, targetLang);
+          newTranslations[cacheKey] = translated;
+          // 存入 cache ref
+          translationCacheRef.current[cacheKey] = translated;
+        } catch (error) {
+          console.error('Translation error:', error);
+          newTranslations[cacheKey] = item.title; // 失敗時使用原文
+          translationCacheRef.current[cacheKey] = item.title;
+        }
+
+        loadingSet.delete(item.id);
+        setLoadingTranslations(new Set(loadingSet));
+      }
+
+      setTranslations(prev => ({ ...prev, ...newTranslations }));
+    };
+
+    translateItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetLang, items.map(i => `${i.id}_${i.title}`).join(',')]);
+
   return (
     <div className="relative px-4">
       {/* 時間軸虛線 */}
@@ -75,17 +125,30 @@ const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress }:
                     <div className="text-[#86A38E] flex-shrink-0">
                       {item.icon}
                     </div>
-                    <h3
-                      className={`text-base font-semibold text-gray-800 flex-1 truncate ${
-                        onNavigate ? 'cursor-pointer' : ''
-                      }`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onNavigate?.(item)
-                      }}
-                    >
-                      {item.title}
-                    </h3>
+                    <div className="flex-1 min-w-0">
+                      {/* 原始中文標題（第一行） */}
+                      <h3
+                        className={`text-base font-semibold text-gray-800 truncate ${
+                          onNavigate ? 'cursor-pointer' : ''
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onNavigate?.(item)
+                        }}
+                      >
+                        {item.title}
+                      </h3>
+                      {/* 翻譯標題（第二行，墨綠色） */}
+                      {targetLang && translateText && (
+                        <div className="text-sm text-[#2d5016] mt-0.5 truncate">
+                          {loadingTranslations.has(item.id) ? (
+                            <span className="text-gray-400 italic">翻譯中...</span>
+                          ) : (
+                            translations[`${item.title}_${targetLang}`] || item.title
+                          )}
+                        </div>
+                      )}
+                    </div>
                     {/* 導航與複製按鈕群組 */}
                     <div className="flex items-center gap-2">
                       {onCopyAddress && (item.address || item.thaiName || item.title) && (

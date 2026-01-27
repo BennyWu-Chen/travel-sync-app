@@ -7,7 +7,7 @@ export type TimelineItemModalProps = {
   isOpen: boolean
   onClose: () => void
   onSubmit: (data: { time: string; title: string; category: TimelineItemType; address?: string; thaiName?: string }) => void
-  onDelete?: () => void // 新增刪除回調
+  onDelete?: () => void // 新增刪除回調（階段三：只有管理員權限時才傳入）
   initialData?: {
     time: string
     title: string
