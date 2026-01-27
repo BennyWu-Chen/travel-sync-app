@@ -5,7 +5,7 @@ import TimelineItemModal from './components/TimelineItemModal'
 import FlightCard from './components/FlightCard'
 import HotelCard from './components/HotelCard'
 import BookingModal from './components/BookingModal'
-import { Calendar, Ticket, Wallet, ListChecks, MapPin, Utensils, Edit, ShoppingBag, Camera, AlertCircle, Users, Plus, X, Languages, Copy, Plane, Hotel, Car, FileText, Navigation, ExternalLink } from 'lucide-react'
+import { Calendar, Ticket, Wallet, ListChecks, MapPin, Utensils, Edit, ShoppingBag, Camera, AlertCircle, Users, Plus, X, Languages, Copy, Plane, Hotel, Car, FileText, Navigation, ExternalLink, Trash2 } from 'lucide-react'
 import { db } from './api/firebase'
 import { 
   collection, 
@@ -37,6 +37,35 @@ interface TimelineItem {
 interface Member {
   id: string;
   name: string;
+}
+
+interface AccountingRecord {
+  id: string;
+  item: string;
+  amountTHB: number;
+  date: string;
+  paidByMemberId: string;
+  paidByName: string;
+  createdAt?: any;
+}
+
+type FxCurrency = 'KRW' | 'TWD' | 'USD' | 'THB'
+
+interface Expense {
+  id: string;
+  title: string;
+  amount: number;
+  currency: FxCurrency;
+  amountTWD: number;
+  date: string;
+  paymentMethod: 'cash' | 'card';
+  location?: string;
+  payerId: string;
+  payerName: string;
+  // 參與分攤的成員 ID 陣列（Firestore 欄位：splitWith）
+  splitWith: string[];
+  rateToTWD: number;
+  createdAt?: any;
 }
 
 // 預訂資料型別
@@ -123,6 +152,39 @@ function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
+
+  // 記帳分頁狀態（新 Expense Tab）
+  const [accountingSubTab, setAccountingSubTab] = useState<'form' | 'list'>('form');
+  const [accountingMessage, setAccountingMessage] = useState<string | null>(null);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
+  // 明細日期摺疊：true 代表該日期目前是「收起」
+  const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({});
+  const [expandAllDates, setExpandAllDates] = useState(false);
+
+  // 內嵌記帳表單狀態
+  const [expDate, setExpDate] = useState<string>(() => {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate() + 0).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  });
+  const [expCurrency, setExpCurrency] = useState<FxCurrency>('KRW');
+  const [expAmount, setExpAmount] = useState('');
+  const [expPaymentMethod, setExpPaymentMethod] = useState<'cash' | 'card'>('cash');
+  const [expLocation, setExpLocation] = useState('');
+  const [expTitle, setExpTitle] = useState('');
+  const [expPayerId, setExpPayerId] = useState<string>('');
+  const [expParticipants, setExpParticipants] = useState<string[]>([]);
+
+  // 即時匯率：1 外幣 = ? TWD（今日快取）
+  const [fxRates, setFxRates] = useState<Record<FxCurrency, number>>({
+    KRW: 0,
+    TWD: 1,
+    USD: 0,
+    THB: 0,
+  });
 
   // 即時翻譯功能狀態（用於行程頁面的翻譯預覽）
   const [targetLang, setTargetLang] = useState<'th' | 'en' | 'ja' | 'ko'>('th');
@@ -242,6 +304,64 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // 監聽 Firebase 的 expenses 集合（記帳明細）
+  useEffect(() => {
+    if (!db) {
+      setIsLoadingExpenses(false);
+      return;
+    }
+
+    setIsLoadingExpenses(true);
+    const q = query(
+      collection(db, 'expenses'),
+      orderBy('date', 'desc'),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const fetched: Expense[] = snapshot.docs.map((doc) => {
+          const raw = doc.data() as any;
+          const splitWith: string[] =
+            (raw.splitWith as string[] | undefined) ??
+            (raw.participants as string[] | undefined) ??
+            [];
+          return {
+            id: doc.id,
+            ...raw,
+            splitWith,
+          } as Expense;
+        });
+
+        setExpenses(fetched);
+        setIsLoadingExpenses(false);
+
+        // 初始化日期摺疊：預設只展開最後一天 / 今天
+        const dates = Array.from(new Set(fetched.map((e) => e.date))).sort();
+        if (dates.length > 0) {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const lastDate = dates[dates.length - 1];
+          const expandedDate = dates.includes(todayStr) ? todayStr : lastDate;
+          setCollapsedDates(
+            dates.reduce<Record<string, boolean>>((acc, d) => {
+              acc[d] = d !== expandedDate;
+              return acc;
+            }, {})
+          );
+        } else {
+          setCollapsedDates({});
+        }
+      },
+      (err) => {
+        console.error('Firestore expenses onSnapshot Error: ', err);
+        setIsLoadingExpenses(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [db]);
 
   // 監聽 Firebase 的 bookings 集合
   useEffect(() => {
@@ -370,6 +490,65 @@ function App() {
       console.error("更新標題失敗:", e);
     }
   };
+
+  // ---- 新記帳分頁：匯率取得（open.er-api，當日快取） ----
+  const fetchFxRates = async () => {
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const cacheKey = `fx_rates_${today}`;
+    if (typeof window !== 'undefined') {
+      const cached = window.localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached) as Record<FxCurrency, number>;
+        setFxRates(parsed);
+        return parsed;
+      }
+    }
+
+    try {
+      const res = await fetch('https://open.er-api.com/v6/latest/TWD');
+      const data = await res.json();
+      const r: Record<FxCurrency, number> = {
+        KRW: data.rates?.KRW ? 1 / data.rates.KRW : 0,
+        TWD: 1,
+        USD: data.rates?.USD ? 1 / data.rates.USD : 0,
+        THB: data.rates?.THB ? 1 / data.rates.THB : 0,
+      };
+      setFxRates(r);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(cacheKey, JSON.stringify(r));
+      }
+      return r;
+    } catch (e) {
+      console.error('fetchFxRates error', e);
+      return fxRates;
+    }
+  };
+
+  useEffect(() => {
+    // 初次掛載時抓一次匯率
+    fetchFxRates().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 成員載入後，預設付款人 & 分攤對象為全部成員
+  useEffect(() => {
+    if (members.length === 0) return;
+    const allIds = members.map((m) => m.id);
+    if (!expPayerId) {
+      setExpPayerId(allIds[0]);
+    }
+    if (expParticipants.length === 0) {
+      setExpParticipants(allIds);
+    }
+  }, [members, expPayerId, expParticipants.length]);
+
+  useEffect(() => {
+    // 切換幣別時若沒有對應匯率就再抓一次
+    if (!fxRates[expCurrency]) {
+      fetchFxRates().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expCurrency]);
 
   // 刪除行程功能（一般成員也可以刪除）
   const handleDeleteItem = async (id: string) => {
@@ -591,6 +770,100 @@ function App() {
       setError("儲存行程時發生錯誤，請稍後再試。");
     }
   }
+
+  // 內嵌記帳表單送出：寫入 expenses 集合
+  const handleAddExpense = async () => {
+    if (!db) {
+      setError("Firebase 連線失敗，無法儲存記帳紀錄。");
+      return;
+    }
+
+    setAccountingMessage(null);
+
+    const amountNum = parseFloat(expAmount || '0');
+    if (!expTitle.trim()) {
+      setAccountingMessage('請輸入消費項目');
+      alert('請輸入消費項目');
+      return;
+    }
+    if (Number.isNaN(amountNum) || amountNum <= 0) {
+      setAccountingMessage('請輸入正確的金額');
+      alert('請輸入正確的金額');
+      return;
+    }
+    if (!expDate) {
+      setAccountingMessage('請選擇日期');
+      alert('請選擇日期');
+      return;
+    }
+    if (!expPayerId) {
+      setAccountingMessage('請選擇付款人');
+      alert('請選擇付款人');
+      return;
+    }
+    if (expParticipants.length === 0) {
+      setAccountingMessage('請至少選擇一位分攤成員');
+      alert('請至少選擇一位分攤成員');
+      return;
+    }
+
+    const rateToTWD = fxRates[expCurrency];
+    if (!rateToTWD) {
+      setAccountingMessage('匯率載入中，請稍後再試');
+      alert('匯率載入中，請稍後再試');
+      return;
+    }
+
+    const payer = members.find((m) => m.id === expPayerId);
+    const splitIds = expParticipants;
+
+    try {
+      await addDoc(collection(db, 'expenses'), {
+        title: expTitle.trim(),
+        amount: amountNum,
+        currency: expCurrency,
+        amountTWD: amountNum * rateToTWD,
+        rateToTWD,
+        date: expDate,
+        paymentMethod: expPaymentMethod,
+        location: expLocation.trim() || null,
+        payerId: expPayerId,
+        payerName: payer?.name || '',
+        // 實際 Firestore 欄位名稱：splitWith
+        splitWith: splitIds,
+        // 兼容舊資料（舊欄位 participants）
+        participants: splitIds,
+        createdAt: serverTimestamp(),
+      });
+
+      // 顯示新增成功訊息
+      setAccountingMessage('記帳新增成功！');
+      alert('記帳新增成功！');
+
+      // 清空表單，切換到明細分頁
+      setExpAmount('');
+      setExpTitle('');
+      setExpLocation('');
+      setAccountingSubTab('list');
+      setError(null);
+    } catch (e) {
+      console.error("Error writing expense: ", e);
+      setError("儲存記帳紀錄時發生錯誤，請稍後再試。");
+    }
+  };
+
+  // 刪除單筆記帳（任何人都可刪除，但會跳確認）
+  const handleDeleteExpense = async (id: string) => {
+    if (!db) return;
+    const ok = window.confirm('確定要刪除此筆記帳紀錄嗎？');
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'expenses', id));
+    } catch (e) {
+      console.error('刪除記帳紀錄失敗:', e);
+      alert('刪除失敗，請稍後再試一次');
+    }
+  };
 
 // 確保檔案最上方有 import React from 'react'
 
@@ -1015,15 +1288,535 @@ const getIconComponentByName = (name: string) => {
             )}
           </div>
         );
-      case 'accounting':
+      case 'accounting': {
+        const amountNum = parseFloat(expAmount || '0');
+        const approxTWD =
+          !Number.isNaN(amountNum) && amountNum > 0
+            ? Math.round(amountNum * (fxRates[expCurrency] || 0))
+            : 0;
+
+        // ===== 結算邏輯（重新實作）：依據 expenses 精準計算每人 Paid / Owed / Net =====
+        const settlementStats = members.map((member) => {
+          // 代墊總額：所有由他付款的台幣總和
+          const paid = expenses.reduce((sum, e) => {
+            if (!e.amountTWD || e.amountTWD <= 0) return sum;
+            return e.payerId === member.id ? sum + e.amountTWD : sum;
+          }, 0);
+
+          // 應付總額：他身為分攤對象時，依照 splitWith 平均分攤
+          const owed = expenses.reduce((sum, e) => {
+            if (!e.amountTWD || e.amountTWD <= 0) return sum;
+            const participantIds =
+              e.splitWith && e.splitWith.length > 0
+                ? e.splitWith
+                : members.map((m) => m.id);
+            if (participantIds.length === 0) return sum;
+            if (!participantIds.includes(member.id)) return sum;
+
+            const share = e.amountTWD / participantIds.length;
+            return sum + share;
+          }, 0);
+
+          const net = paid - owed;
+          return { member, paid, owed, net };
+        });
+
+        // 依據最終淨額產生「誰給誰」的轉帳指令
+        const creditors = settlementStats
+          .filter((s) => s.net > 1) // > 1 TWD 避免浮點誤差
+          .map((s) => ({ ...s }));
+        const debtors = settlementStats
+          .filter((s) => s.net < -1)
+          .map((s) => ({ ...s }));
+
+        // 債權人由大到小，債務人由絕對值大到小
+        creditors.sort((a, b) => b.net - a.net);
+        debtors.sort((a, b) => a.net - b.net);
+
+        type Transfer = { from: string; to: string; amount: number };
+        const transfers: Transfer[] = [];
+
+        let i = 0;
+        let j = 0;
+        while (i < creditors.length && j < debtors.length) {
+          const cred = creditors[i];
+          const debt = debtors[j];
+          const amount = Math.min(cred.net, -debt.net);
+
+          if (amount > 1) {
+            transfers.push({
+              from: debt.member.name,
+              to: cred.member.name,
+              // 顯示一律取整數
+              amount: Math.round(amount),
+            });
+          }
+
+          cred.net -= amount;
+          debt.net += amount;
+
+          if (cred.net <= 1) i += 1;
+          if (debt.net >= -1) j += 1;
+        }
+
+        const settlementText =
+          transfers.length === 0
+            ? '大家目前已經平均，沒有需要額外結算的金額。'
+            : transfers
+                .map(
+                  (t) =>
+                    `${t.from} ➔ ${t.to}：${t.amount.toLocaleString()} TWD`
+                )
+                .join('\n');
+
         return (
           <div className="px-4 py-6">
-            <h1 className="text-3xl font-bold text-[#86A38E] mb-6">記帳</h1>
-            <div className="bg-white rounded-[1.5rem] p-8 shadow-[4px_4px_0px_#E0E5D5] text-center">
-              <p className="text-gray-800 text-base">記帳頁面建設中...</p>
+            <div className="mb-4">
+              <h1 className="text-3xl font-bold text-[#86A38E]">記帳</h1>
             </div>
+
+            {/* 訊息提示列 */}
+            {accountingMessage && (
+              <div className="mb-3 px-3 py-2 rounded-xl bg-yellow-50 border border-yellow-300 text-xs text-yellow-800">
+                {accountingMessage}
+              </div>
+            )}
+
+            {/* 上方 Segmented Control：記帳 / 明細 */}
+            <div className="mb-4">
+              <div className="bg-[#F7F4EB] rounded-full p-1 flex">
+                <button
+                  type="button"
+                  onClick={() => setAccountingSubTab('form')}
+                  className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors ${
+                    accountingSubTab === 'form'
+                      ? 'bg-[#86A38E] text-white shadow-sm'
+                      : 'bg-transparent text-gray-600'
+                  }`}
+                >
+                  記帳
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAccountingSubTab('list')}
+                  className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors ${
+                    accountingSubTab === 'list'
+                      ? 'bg-[#86A38E] text-white shadow-sm'
+                      : 'bg-transparent text-gray-600'
+                  }`}
+                >
+                  明細
+                </button>
+              </div>
+            </div>
+
+            {/* 內嵌記帳表單 */}
+            {accountingSubTab === 'form' && (
+              <div className="bg-white rounded-3xl p-4 shadow-[4px_4px_0px_#E0E5D5] space-y-4">
+                {/* 日期 */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">日期</div>
+                  <input
+                    type="date"
+                    value={expDate}
+                    onChange={(e) => setExpDate(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl bg-[#F7F4EB] border border-[#E0E5D5] text-sm"
+                  />
+                </div>
+
+                {/* 幣別 */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">幣別</div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(['KRW', 'TWD', 'USD', 'THB'] as FxCurrency[]).map((code) => (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => setExpCurrency(code)}
+                        className={`py-2 text-xs rounded-xl border-2 transition-colors ${
+                          expCurrency === code
+                            ? 'bg-[#86A38E] text-white border-[#86A38E] shadow-sm'
+                            : 'bg-white text-gray-700 border-[#E0E5D5]'
+                        }`}
+                      >
+                        {code}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 金額 + 約合台幣 */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">金額</div>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={expAmount}
+                      onChange={(e) => setExpAmount(e.target.value)}
+                      className="w-full px-4 py-2.5 border-2 border-[#E0E5D5] rounded-xl text-sm focus:outline-none focus:border-[#86A38E]"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">約合台幣</div>
+                    <div className="w-full px-4 py-2.5 border-2 border-[#E0E5D5] rounded-xl bg-[#F7F4EB] text-sm text-right font-bold text-[#86A38E]">
+                      {approxTWD > 0 ? `${approxTWD.toLocaleString()} TWD` : '—'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 支付方式 */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">支付方式</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { value: 'cash', label: '現金' },
+                      { value: 'card', label: '信用卡' },
+                    ].map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => setExpPaymentMethod(o.value as 'cash' | 'card')}
+                        className={`py-2 text-xs rounded-xl border-2 transition-colors ${
+                          expPaymentMethod === o.value
+                            ? 'bg-[#FFB84D] border-[#FFB84D] text-white'
+                            : 'bg-white border-[#E0E5D5] text-gray-700'
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 地點 */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">地點（選填）</div>
+                  <input
+                    type="text"
+                    value={expLocation}
+                    onChange={(e) => setExpLocation(e.target.value)}
+                    placeholder="例如：便利商店"
+                    className="w-full px-4 py-2.5 border-2 border-[#E0E5D5] rounded-xl text-sm focus:outline-none focus:border-[#86A38E]"
+                  />
+                </div>
+
+                {/* 消費項目 */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">消費項目</div>
+                  <input
+                    type="text"
+                    value={expTitle}
+                    onChange={(e) => setExpTitle(e.target.value)}
+                    placeholder="例如：午餐"
+                    className="w-full px-4 py-2.5 border-2 border-[#E0E5D5] rounded-xl text-sm focus:outline-none focus:border-[#86A38E]"
+                  />
+                </div>
+
+                {/* 付款人頭像選取器 */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-2">付款人</div>
+                  <div className="flex gap-2 overflow-x-auto">
+                    {members.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setExpPayerId(m.id)}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${
+                          expPayerId === m.id
+                            ? 'border-[#86A38E] bg-[#E0F1E3]'
+                            : 'border-transparent bg-transparent'
+                        }`}
+                      >
+                        <div className="w-7 h-7 rounded-full bg-gray-300 flex items-center justify-center text-xs font-semibold">
+                          {m.name[0]}
+                        </div>
+                        <span className="text-xs text-gray-800 whitespace-nowrap">
+                          {m.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 分攤對象（多選） */}
+                <div>
+                  <div className="text-xs text-gray-500 mb-2">分攤對象（可多選）</div>
+                  <div className="flex gap-2 overflow-x-auto">
+                    {members.map((m) => {
+                      const selected = expParticipants.includes(m.id);
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setExpParticipants((prev) =>
+                              prev.includes(m.id)
+                                ? prev.filter((id) => id !== m.id)
+                                : [...prev, m.id]
+                            );
+                          }}
+                          className={`flex items-center gap-2 px-3 py-1.5 rounded-full border relative ${
+                            selected
+                              ? 'border-[#86A38E] bg-[#E0F1E3]'
+                              : 'border-[#E0E5D5] bg-white'
+                          }`}
+                        >
+                          <div className="w-7 h-7 rounded-full bg-gray-300 flex items-center justify-center text-xs font-semibold">
+                            {m.name[0]}
+                          </div>
+                          <span className="text-xs text-gray-800 whitespace-nowrap">
+                            {m.name}
+                          </span>
+                          {selected && (
+                            <span className="ml-1 text-[10px] text-[#86A38E] font-semibold">
+                              ✓
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 記帳按鈕 */}
+                <button
+                  type="button"
+                  onClick={handleAddExpense}
+                  className="w-full mt-2 py-2.5 bg-[#86A38E] text-white rounded-xl font-medium hover:bg-[#7a9382] transition-colors active:scale-95"
+                >
+                  記帳
+                </button>
+              </div>
+            )}
+
+            {/* 明細列表（使用 expenses 狀態，依日期分組 + 摺疊） */}
+            {accountingSubTab === 'list' && (
+              <div className="space-y-4">
+                {/* 全部展開 / 全部縮小 開關 */}
+                <div className="flex justify-end mb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (expenses.length === 0) return;
+                      const dates = Array.from(new Set(expenses.map((e) => e.date))).sort();
+                      const nextExpandAll = !expandAllDates;
+                      setExpandAllDates(nextExpandAll);
+                      setCollapsedDates(
+                        dates.reduce<Record<string, boolean>>((acc, d) => {
+                          acc[d] = !nextExpandAll;
+                          return acc;
+                        }, {})
+                      );
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-full border border-[#86A38E] text-[#86A38E]"
+                  >
+                    {expandAllDates ? '全部縮小' : '全部展開'}
+                  </button>
+                </div>
+
+                {/* 分組明細列表 */}
+                <div className="space-y-3">
+                  {isLoadingExpenses ? (
+                    <div className="bg-white rounded-xl p-6 text-center text-[#86A38E] shadow-[4px_4px_0px_#E0E5D5]">
+                      載入中…
+                    </div>
+                  ) : expenses.length === 0 ? (
+                    <div className="bg-white rounded-xl p-8 text-center shadow-[4px_4px_0px_#E0E5D5]">
+                      <p className="text-gray-600 mb-2">尚無記帳紀錄</p>
+                      <p className="text-xs text-gray-400">請先在「記帳」分頁新增。</p>
+                    </div>
+                  ) : (
+                    (() => {
+                      // 依日期分組
+                      const groups: Record<string, Expense[]> = {};
+                      expenses.forEach((e) => {
+                        const key = e.date || '未填日期';
+                        if (!groups[key]) groups[key] = [];
+                        groups[key].push(e);
+                      });
+
+                      const sortedDates = Object.keys(groups).sort(); // 由舊到新
+
+                      const formatDateLabel = (dateStr: string) => {
+                        if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                          return dateStr || '未填日期';
+                        }
+
+                        const [y, m, d] = dateStr.split('-');
+                        const dateObj = new Date(dateStr + 'T00:00:00');
+                        const weekdays = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+                        const weekday = weekdays[dateObj.getDay()];
+
+                        // 計算 Day X：使用「該筆帳單日期 - 行程開始日期 + 1」，只在差值 >= 0 時顯示
+                        let dayLabel = '';
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+                          const start = new Date(startDate + 'T00:00:00');
+                          const diffDays = Math.floor(
+                            (dateObj.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+                          );
+                          if (!Number.isNaN(diffDays) && diffDays >= 0) {
+                            dayLabel = ` Day ${diffDays + 1}`;
+                          }
+                        }
+
+                        return `${y}/${m}/${d} (${weekday})${dayLabel}`;
+                      };
+
+                      return sortedDates.map((dateStr) => {
+                        const items = groups[dateStr];
+                        const dailyTotal = Math.round(
+                          items.reduce((sum, e) => sum + (e.amountTWD || 0), 0)
+                        );
+                        const isCollapsed = collapsedDates[dateStr] ?? false;
+
+                        return (
+                          <div key={dateStr} className="space-y-2">
+                            {/* 日期標題列 */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCollapsedDates((prev) => ({
+                                  ...prev,
+                                  [dateStr]: !isCollapsed,
+                                }))
+                              }
+                              className="w-full px-3 py-2 rounded-xl bg-[#E6F0E9] flex items-center justify-between text-xs font-medium text-[#355844]"
+                            >
+                              <span>{formatDateLabel(dateStr)}</span>
+                              <span className="flex items-center gap-2">
+                                <span className="text-[11px] text-[#4B6B57]">
+                                  當日合計：{dailyTotal.toLocaleString()} TWD
+                                </span>
+                                <span>{isCollapsed ? '＋' : '－'}</span>
+                              </span>
+                            </button>
+
+                            {/* 日期內的明細項目 */}
+                            {!isCollapsed && (
+                              <div className="space-y-2">
+                                {items.map((e) => {
+                                  const splitNames =
+                                    e.splitWith && e.splitWith.length > 0
+                                      ? e.splitWith
+                                          .map((id) => members.find((m) => m.id === id)?.name)
+                                          .filter(Boolean)
+                                          .join('、')
+                                      : '';
+
+                                  return (
+                                    <div
+                                      key={e.id}
+                                      className="relative bg-white rounded-xl p-4 shadow-[4px_4px_0px_#E0E5D5]"
+                                    >
+                                      {/* 刪除按鈕（任何人都可見） */}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteExpense(e.id)}
+                                        className="absolute top-2 right-2 w-7 h-7 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors active:scale-95"
+                                        aria-label="刪除此筆記帳"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+
+                                      <div className="flex justify-between mb-1 text-sm pr-8">
+                                        <span className="font-medium text-gray-800">
+                                          {e.title}
+                                        </span>
+                                        <span className="font-semibold text-[#86A38E]">
+                                          {e.amount.toLocaleString()} {e.currency} ·{' '}
+                                          {Math.round(e.amountTWD).toLocaleString()} TWD
+                                        </span>
+                                      </div>
+                                      <div className="text-[11px] text-gray-500 flex justify-between pr-8">
+                                        <span>{e.date}</span>
+                                        <span>
+                                          付款人：{e.payerName}
+                                          {splitNames && ` ／ 分攤：${splitNames}`}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+                </div>
+
+                {/* 結算總覽 */}
+                <div className="bg-white rounded-xl p-4 shadow-[4px_4px_0px_#E0E5D5] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-gray-800">結算總覽</h2>
+                    <button
+                      type="button"
+                      disabled={transfers.length === 0}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(settlementText);
+                          alert('已複製結算結果到剪貼簿');
+                        } catch (e) {
+                          console.error(e);
+                          alert('複製失敗，請手動選取文字複製');
+                        }
+                      }}
+                      className="px-3 py-1.5 text-xs rounded-lg border border-[#86A38E] text-[#86A38E] disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
+                    >
+                      複製結算文字
+                    </button>
+                  </div>
+
+                  {/* 每人淨額摘要 */}
+                  {members.length > 0 && (
+                    <div className="space-y-1 text-xs text-gray-700">
+                      {settlementStats.map((s) => (
+                        <div key={s.member.id} className="flex justify-between">
+                          <span>{s.member.name}</span>
+                          <span>
+                            代墊 {Math.round(s.paid).toLocaleString()} − 應付{' '}
+                            {Math.round(s.owed).toLocaleString()} ={' '}
+                            <span
+                              className={
+                                s.net > 1
+                                  ? 'text-[#86A38E] font-semibold'
+                                  : s.net < -1
+                                  ? 'text-red-500 font-semibold'
+                                  : 'text-gray-400'
+                              }
+                            >
+                              {Math.round(s.net).toLocaleString()} TWD
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 最終結算清單 */}
+                  <div className="mt-2">
+                    {transfers.length === 0 ? (
+                      <p className="text-xs text-gray-500">
+                        大家目前已經平均，沒有需要額外結算的金額。
+                      </p>
+                    ) : (
+                      <ul className="space-y-1 text-xs text-gray-800">
+                        {transfers.map((t, idx) => (
+                          <li key={`${t.from}-${t.to}-${idx}`}>
+                            {t.from} ➔ {t.to}：{t.amount.toLocaleString()} TWD
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
+      }
       case 'members':
         return (
           <div className="px-4 py-6">
