@@ -6,7 +6,7 @@ import React from 'react'
 export type TimelineItemModalProps = {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (data: { time: string; title: string; category: TimelineItemType; address?: string; thaiName?: string }) => void
+  onSubmit: (data: { time: string; title: string; category: TimelineItemType; address?: string; thaiName?: string; notes?: string }) => void
   onDelete?: () => void // 新增刪除回調（階段三：只有管理員權限時才傳入）
   initialData?: {
     time: string
@@ -14,6 +14,7 @@ export type TimelineItemModalProps = {
     category: TimelineItemType
     address?: string
     thaiName?: string
+    notes?: string
   }
 }
 
@@ -28,6 +29,7 @@ const TimelineItemModal: React.FC<TimelineItemModalProps> = ({
   const [title, setTitle] = useState(initialData?.title || '')
   const [address, setAddress] = useState(initialData?.address || '')
   const [thaiName, setThaiName] = useState(initialData?.thaiName || '') // 新增泰文名稱狀態
+  const [notes, setNotes] = useState(initialData?.notes || '')
   const [category, setCategory] = useState<TimelineItemType>(
     initialData?.category || 'attraction'
   )
@@ -39,12 +41,14 @@ const TimelineItemModal: React.FC<TimelineItemModalProps> = ({
       setTitle(initialData.title)
       setAddress(initialData.address || '')
       setThaiName(initialData.thaiName || '') // 更新泰文名稱狀態
+      setNotes(initialData.notes || '')
       setCategory(initialData.category)
     } else {
       setTime('10:00')
       setTitle('')
       setAddress('')
       setThaiName('') // 清空泰文名稱狀態
+      setNotes('')
       setCategory('attraction')
     }
   }, [initialData, isOpen])
@@ -54,7 +58,14 @@ const TimelineItemModal: React.FC<TimelineItemModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim()) return
-    onSubmit({ time, title: title.trim(), category, address: address.trim() || undefined, thaiName: thaiName.trim() || undefined })
+    onSubmit({
+      time,
+      title: title.trim(),
+      category,
+      address: address.trim() || undefined,
+      thaiName: thaiName.trim() || undefined,
+      notes: notes.trim() || undefined,
+    })
     onClose()
   }
 
@@ -196,6 +207,20 @@ const TimelineItemModal: React.FC<TimelineItemModalProps> = ({
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* 備註輸入框 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                備註 <span className="text-xs text-gray-500">(選填，可輸入注意事項、交通方式等)</span>
+              </label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                placeholder="例如：記得穿長褲，門票 500 泰銖..."
+                className="w-full px-4 py-2.5 border-2 border-[#E0E5D5] rounded-xl focus:outline-none focus:border-[#86A38E] transition-colors text-sm resize-none"
+              />
             </div>
 
             {/* 分類選擇 */}

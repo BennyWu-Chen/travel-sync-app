@@ -11,6 +11,7 @@ export type TimelineItem = {
   category: TimelineItemType;
   address?: string; // 地址或店名，用於 Google Maps 導航
   thaiName?: string; // 泰文名稱，方便泰國司機辨識
+  notes?: string; // 備註
 }
 
 // 分類顏色映射 (仍保留，因為用於渲染標籤)
@@ -186,13 +187,27 @@ const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress, o
                   </div>
 
                   {/* 分類標記 */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 mb-1">
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${categoryColor}`}
                     >
                       {categoryLabel}
                     </span>
                   </div>
+
+                  {/* 地址 */}
+                  {item.address && (
+                    <div className="text-xs text-gray-600 mb-1">
+                      {item.address}
+                    </div>
+                  )}
+
+                  {/* 備註 */}
+                  {item.notes && (
+                    <div className="mt-1 pl-2 border-l border-gray-200 text-xs text-gray-500 whitespace-pre-line">
+                      {item.notes}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

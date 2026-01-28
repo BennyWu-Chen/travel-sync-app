@@ -30,6 +30,7 @@ interface TimelineItem {
   category: TimelineItemType;
   address?: string;
   thaiName?: string;
+  notes?: string;
   iconName: string;
   day: number;
 }
@@ -303,6 +304,7 @@ function App() {
     const unsubscribe: Unsubscribe = onSnapshot(q, (snapshot) => {
       setIsLoading(false);
       const fetchedItems = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as TimelineItem[];
+      console.log("Current Schedule Data:", fetchedItems);
       // 在客戶端按時間排序
       fetchedItems.sort((a, b) => a.time.localeCompare(b.time));
       setItems(fetchedItems);
@@ -818,6 +820,7 @@ function App() {
     category: TimelineItemType;
     address?: string;
     thaiName?: string;
+    notes?: string;
   }) => {
     if (!db) {
       setError("Firebase 連線失敗，無法儲存行程。");
@@ -833,6 +836,7 @@ function App() {
       category: data.category,
       address: data.address || null,
       thaiName: data.thaiName || null,
+      notes: data.notes || null,
       day: currentDay, // 編輯時保留原 day，新增時使用 selectedDay（確保有預設值 1）
       iconName: data.category === 'food' ? 'Utensils' : data.category === 'attraction' ? 'MapPin' : data.category === 'shopping' ? 'ShoppingBag' : 'Camera',
       updatedAt: serverTimestamp()
