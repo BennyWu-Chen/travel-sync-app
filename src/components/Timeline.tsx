@@ -187,20 +187,13 @@ const Timeline = ({ items, onItemClick, onAddClick, onNavigate, onCopyAddress, o
                   </div>
 
                   {/* 分類標記 */}
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2">
                     <span
                       className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${categoryColor}`}
                     >
                       {categoryLabel}
                     </span>
                   </div>
-
-                  {/* 地址 */}
-                  {item.address && (
-                    <div className="text-xs text-gray-600 mb-1">
-                      {item.address}
-                    </div>
-                  )}
 
                   {/* 備註 */}
                   {item.notes && (
